@@ -1,0 +1,576 @@
+<!--
+  =============================================================================
+   Project:   Cesium Live Satellites + Debris
+   Filename:  index.html
+   Author:    Darshini Rajamani
+   Copyright: © 2025 Darshini Rajamani
+   Website:   https://darshinirajamani.com
+   Description:
+     - Shows active satellites (with paths) and debris (as billboards) using CesiumJS
+     - TLEs are cached (active = 2h, debris = 6h) and propagated via satellite.js
+   Last Mod:  2025-06-03
+  =============================================================================
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Live Satellites + Debris</title>
+
+  <!-- CesiumJS -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.129/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.129/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- satellite.js for TLE parsing & propagation -->
+  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
+
+</head>
+<body>
+  <div id="controls">
+    <div class="buttonStack">
+      <button id="reset">Reset</button>
+      <button id="goRealTime">Real-Time (Today)</button>
+    </div>
+    <button id="toggleControls">☰ Filters</button>
+
+    <div id="debrisControls">
+      <input type="checkbox" id="debrisToggle" checked />
+      <label for="debrisToggle" style="display:inline; cursor:pointer;">Show Debris</label>
+
+      <div id="debrisGroupControls">
+        <label><input type="checkbox" class="debrisGroup" value="0" checked /> Cosmos-2251 Debris</label>
+        <label><input type="checkbox" class="debrisGroup" value="1" checked /> Cosmos-1408 Debris</label>
+        <label><input type="checkbox" class="debrisGroup" value="2" checked /> Fengyun-1C Debris</label>
+        <label><input type="checkbox" class="debrisGroup" value="3" checked /> Iridium-33 Debris</label>
+      </div>
+    </div>
+
+    <div id="controlPanel" style="display:none;">
+      <div>
+        <label for="searchName">Search name:</label>
+        <input type="text" id="searchName" placeholder="e.g. STARLINK" />
+      </div>
+      <div>
+        <label>Matches:</label>
+        <ul id="searchResults" style="max-height:120px; overflow:auto; padding-left:1em; margin-top:4px; border:1px solid #ccc;"></ul>
+      </div>
+      <div>
+        <label for="orbitType">Orbit:</label>
+        <select id="orbitType">
+          <option value="ALL">All</option>
+          <option value="LEO">LEO</option>
+          <option value="MEO">MEO</option>
+          <option value="GEO">GEO</option>
+        </select>
+      </div>
+      <div>
+        <label for="maxCount">Max per orbit:</label>
+        <input type="number" id="maxCount" min="1" value="5" />
+      </div>
+      <div style="text-align:right; margin-top:8px;">
+        <button id="applyFilter">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="cesiumContainer"></div>
+
+  <script type="module">
+    // ——————————————
+    // CORE SETUP 
+    // ——————————————
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3NjdhOWNmNy01OTRlLTQ5NWYtYjBkMi0zNjU2NDc1N2ZmMWEiLCJpZCI6MzAzNjE2LCJpYXQiOjE3NDc2MDUyMzl9.m8hy0mM7EBQiQXR6u-tcUOQvYZ6ugBxwcQYnWyMJI5c';
+
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      shouldAnimate:       true,
+      timeline:            true,
+      animation:           true,
+      baseLayerPicker:     false,
+      sceneModePicker:     false
+    });
+
+    // Real Time Button
+    const realTimeBtn = document.getElementById('goRealTime');
+
+    realTimeBtn.addEventListener('click', () => {
+      viewer.clock.currentTime = Cesium.JulianDate.now();
+      viewer.clock.multiplier    = 1;
+      viewer.clock.shouldAnimate = true;
+    });
+
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+
+    // Run clock indefinitely at 60× 
+    viewer.clock.startTime     = Cesium.JulianDate.now();
+    viewer.clock.currentTime   = viewer.clock.startTime.clone();
+    viewer.clock.clockRange    = Cesium.ClockRange.UNBOUNDED;
+    viewer.clock.multiplier    = 60;
+    viewer.clock.shouldAnimate = true;
+
+    const satellites    = [];
+    let debrisObjects   = []; 
+
+    // On each tick, propagate both satellites and debris
+    viewer.clock.onTick.addEventListener((clock) => {
+      const nowClock = clock.currentTime;
+
+      // Update active satellites (with labels + trails)
+      satellites.forEach(({ satrec, property }) => {
+        for (let dt = 0; dt <= 30; dt += 5) {
+          const t      = Cesium.JulianDate.addSeconds(nowClock, dt, new Cesium.JulianDate());
+          const jsDate = Cesium.JulianDate.toDate(t);
+
+          const secs       = jsDate.getUTCSeconds();
+          const millis     = jsDate.getUTCMilliseconds();
+          const fracSecond = secs + millis / 1000.0;
+
+          const eci = satellite.propagate(
+            satrec,
+            jsDate.getUTCFullYear(),
+            jsDate.getUTCMonth() + 1,
+            jsDate.getUTCDate(),
+            jsDate.getUTCHours(),
+            jsDate.getUTCMinutes(),
+            fracSecond
+          );
+          if (!eci.position) { continue; }
+          const cartInertial = new Cesium.Cartesian3(
+            eci.position.x * 1000,
+            eci.position.y * 1000,
+            eci.position.z * 1000
+          );
+          property.addSample(t, cartInertial);
+        }
+      });
+
+      // Update debris
+      debrisObjects.forEach(({ satrec, property }) => {
+        const t      = nowClock;
+        const jsDate = Cesium.JulianDate.toDate(t);
+        const secs       = jsDate.getUTCSeconds();
+        const millis     = jsDate.getUTCMilliseconds();
+        const fracSecond = secs + millis / 1000.0;
+
+        const eci = satellite.propagate(
+          satrec,
+          jsDate.getUTCFullYear(),
+          jsDate.getUTCMonth() + 1,
+          jsDate.getUTCDate(),
+          jsDate.getUTCHours(),
+          jsDate.getUTCMinutes(),
+          fracSecond
+        );
+        if (!eci.position) { return; }
+        const cartInertial = new Cesium.Cartesian3(
+          eci.position.x * 1000,
+          eci.position.y * 1000,
+          eci.position.z * 1000
+        );
+        property.addSample(t, cartInertial);
+      });
+    });
+
+
+    // ——————————————
+    // TLE FETCH + CACHE FOR ACTIVE SATELLITES
+    // ——————————————
+    const CACHE_KEY    = 'tleDataCache';
+    const TIME_KEY     = 'tleLastFetch';
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+    async function getTLEs() {
+      const last = Number(localStorage.getItem(TIME_KEY) || 0);
+      const now  = Date.now();
+      if (last && now - last < TWO_HOURS_MS) {
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+          return JSON.parse(cached);
+        }
+      }
+      const txt = await (await fetch(
+        'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle'
+      )).text();
+      const lines = txt.split('\n').filter(l => l.trim());
+      const out = [];
+      for (let i = 0; i < lines.length; i += 3) {
+        const n  = lines[i], l1 = lines[i + 1], l2 = lines[i + 2];
+        if (n && l1 && l2) {
+          out.push({ name: n.trim(), line1: l1.trim(), line2: l2.trim() });
+        }
+      }
+      localStorage.setItem(CACHE_KEY, JSON.stringify(out));
+      localStorage.setItem(TIME_KEY, String(now));
+      return out;
+    }
+
+    function orbitalPeriodMinutes(sr) {
+      const revsPerDay = sr.no * 1440 / (2 * Math.PI);
+      return 1440 / revsPerDay;
+    }
+
+    // ——————————————
+    // UI CONTROLS FOR ACTIVE SATELLITES
+    // ——————————————
+    document.getElementById('toggleControls').onclick = () => {
+        const panel = document.getElementById('controlPanel');
+        panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+    };
+
+    const resultsList = document.getElementById('searchResults');
+    function renderMatches(satArray) {
+      resultsList.innerHTML = '';
+      if (satArray.length === 0) {
+        resultsList.innerHTML = '<li><em>No matches</em></li>';
+        return;
+      }
+      satArray.slice(0, 50).forEach(s => {
+        const li = document.createElement('li');
+        li.textContent = s.name;
+        resultsList.appendChild(li);
+      });
+      if (satArray.length > 50) {
+        const more = document.createElement('li');
+        more.innerHTML = `…and ${satArray.length - 50} more`;
+        more.style.fontStyle = 'italic';
+        resultsList.appendChild(more);
+      }
+    }
+
+    document.getElementById('searchName').addEventListener('input', async (evt) => {
+      const q = evt.target.value.trim().toUpperCase();
+      if (!q) {
+        resultsList.innerHTML = '';
+        return;
+      }
+      const all     = await getTLEs();
+      const matches = all.filter(s => s.name.toUpperCase().includes(q));
+      renderMatches(matches);
+    });
+
+    document.getElementById('applyFilter').onclick = async () => {
+      // Clear existing entities
+      viewer.entities.removeAll();
+      satellites.length = 0;
+      removeAllDebris();
+      debrisObjects = [];
+
+      const nameQuery = document.getElementById('searchName').value.trim().toUpperCase();
+      const orbitType = document.getElementById('orbitType').value;
+      const maxCount  = parseInt(document.getElementById('maxCount').value, 10);
+
+      const all     = await getTLEs();
+      let filtered  = all.filter(s => s.name.toUpperCase().includes(nameQuery));
+      renderMatches(filtered);
+
+      // Bucket into LEO, MEO, GEO
+      const buckets = { LEO: [], MEO: [], GEO: [] };
+      filtered.forEach(s => {
+        const sr = satellite.twoline2satrec(s.line1, s.line2);
+        const p  = orbitalPeriodMinutes(sr);
+        if (p >= 90 && p <= 128)        buckets.LEO.push(s);
+        else if (p > 128 && p <= 1440)   buckets.MEO.push(s);
+        else if (p > 1440)               buckets.GEO.push(s);
+      });
+
+      let subs = [];
+      const pick = (arr) => arr.slice(0, maxCount);
+      if (orbitType === 'ALL') {
+        subs = [
+          ...pick(buckets.LEO).map(s => [s, Cesium.Color.LIGHTBLUE,   3600]),
+          ...pick(buckets.MEO).map(s => [s, Cesium.Color.PALEVIOLETRED, 6 * 3600]),
+          ...pick(buckets.GEO).map(s => [s, Cesium.Color.YELLOW,       24 * 3600])
+        ];
+      } else {
+        const color = orbitType === 'LEO'
+          ? Cesium.Color.LIGHTBLUE
+          : orbitType === 'MEO'
+            ? Cesium.Color.PALEVIOLETRED
+            : Cesium.Color.YELLOW;
+        const trail = orbitType === 'LEO' ? 3600 : orbitType === 'MEO' ? 6 * 3600 : 24 * 3600;
+        subs = pick(buckets[orbitType]).map(s => [s, color, trail]);
+      }
+
+      // Create & seed each sat
+      subs.forEach(([sat, color, trailSeconds]) => {
+        const satrec   = satellite.twoline2satrec(sat.line1, sat.line2);
+        const property = new Cesium.SampledPositionProperty(Cesium.ReferenceFrame.INERTIAL);
+
+        property.setInterpolationOptions({
+          interpolationAlgorithm: Cesium.HermitePolynomialApproximation,
+          interpolationDegree:    2
+        });
+        property.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
+
+        // Seed 5 anchor points
+        const nowClock = viewer.clock.currentTime;
+        [-2, -1, 0, 1, 2].forEach(offset => {
+          const t  = Cesium.JulianDate.addSeconds(nowClock, offset, new Cesium.JulianDate());
+          const dt = Cesium.JulianDate.toDate(t);
+          const secs       = dt.getUTCSeconds();
+          const millis     = dt.getUTCMilliseconds();
+          const fracSecond = secs + millis / 1000.0;
+
+          const eci = satellite.propagate(
+            satrec,
+            dt.getUTCFullYear(),
+            dt.getUTCMonth() + 1,
+            dt.getUTCDate(),
+            dt.getUTCHours(),
+            dt.getUTCMinutes(),
+            fracSecond
+          );
+          if (!eci.position) { return; }
+          const cart = new Cesium.Cartesian3(
+            eci.position.x * 1000,
+            eci.position.y * 1000,
+            eci.position.z * 1000
+          );
+          property.addSample(t, cart);
+        });
+
+        satellites.push({ satrec, property });
+
+        const periodSeconds = orbitalPeriodMinutes(satrec) * 60;
+
+        viewer.entities.add({
+          id:       sat.name,
+          name:     sat.name,
+          position: property,
+          billboard: {
+            image:          'Pictures/satellite.png',
+            width:          32,
+            height:         32,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER
+          },
+          label: {
+            text:           sat.name,
+            font:           '14px sans-serif',
+            fillColor:      Cesium.Color.WHITE,
+            style:          Cesium.LabelStyle.FILL_AND_OUTLINE,
+            outlineColor:   Cesium.Color.BLACK,
+            outlineWidth:   2,
+            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+            pixelOffset:    new Cesium.Cartesian2(0, -20)
+          },
+          path: {
+            resolution: 60,
+            material:   new Cesium.ColorMaterialProperty(color),
+            width:      1,
+            leadTime:   0,
+            trailTime:  periodSeconds
+          }
+        });
+      });
+
+      // Recenter view on active satellites
+      if (viewer.entities.values.length > 0) {
+        viewer.zoomTo(viewer.entities, { duration: 2.0 });
+      }
+
+      if (document.getElementById('debrisToggle').checked) {
+        await loadCheckedDebrisGroups();
+      }
+    };
+
+    // Clear everything 
+    document.getElementById('reset').onclick = () => {
+      viewer.entities.removeAll();
+      satellites.length = 0;
+      removeAllDebris();
+      debrisObjects = [];
+    };
+
+
+    // ——————————————
+    // DEBRIS LOADING & TOGGLE
+    // ——————————————
+    const DEBRIS_GROUPS = [
+      {
+        url: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-2251-debris&FORMAT=tle',
+        image: 'Pictures/debris1.png'
+      },
+      {
+        url: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=cosmos-1408-debris&FORMAT=tle',
+        image: 'Pictures/debris2.png'
+      },
+      {
+        url: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=fengyun-1c-debris&FORMAT=tle',
+        image: 'Pictures/debris3.png'
+      },
+      {
+        url: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=iridium-33-debris&FORMAT=tle',
+        image: 'Pictures/debris4.png'
+      }
+    ];
+
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+
+    async function getDebrisGroupTLEs(groupIndex) {
+      const cacheKeyData = `debrisGroupCache_${groupIndex}`;
+      const cacheKeyTime = `debrisGroupTime_${groupIndex}`;
+      const now = Date.now();
+      const lastFetch = Number(localStorage.getItem(cacheKeyTime) || 0);
+
+      if (lastFetch && now - lastFetch < SIX_HOURS_MS) {
+        try {
+          const cachedJson = localStorage.getItem(cacheKeyData);
+          if (cachedJson) {
+            return JSON.parse(cachedJson);
+          }
+        } catch (e) {
+          console.warn(`Debris cache parse error for group ${groupIndex}:`, e);
+        }
+      }
+
+      const { url } = DEBRIS_GROUPS[groupIndex];
+      const txt = await (await fetch(url)).text();
+      const lines = txt.split('\n').filter(l => l.trim());
+
+      const out = [];
+      for (let i = 0; i < lines.length; i += 3) {
+        const name = lines[i].trim();
+        const l1   = lines[i + 1]?.trim();
+        const l2   = lines[i + 2]?.trim();
+        if (name && l1 && l2) {
+          out.push({ name, line1: l1, line2: l2 });
+        }
+      }
+
+      try {
+        localStorage.setItem(cacheKeyData, JSON.stringify(out));
+        localStorage.setItem(cacheKeyTime, String(now));
+      } catch (e) {
+        console.warn(`Failed to cache debris group ${groupIndex}:`, e);
+      }
+
+      return out;
+    }
+
+    async function loadDebrisGroup(groupIndex) {
+      const tleArray = await getDebrisGroupTLEs(groupIndex);
+
+      tleArray.forEach((tle, j) => {
+        const satrec = satellite.twoline2satrec(tle.line1, tle.line2);
+        const property = new Cesium.SampledPositionProperty(Cesium.ReferenceFrame.INERTIAL);
+
+        property.setInterpolationOptions({
+          interpolationAlgorithm: Cesium.HermitePolynomialApproximation,
+          interpolationDegree: 2
+        });
+        property.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
+        property.forwardExtrapolationType  = Cesium.ExtrapolationType.HOLD;
+
+        // Seed 3 anchor points
+        const nowClock = viewer.clock.currentTime;
+        [-1, 0, 1].forEach(offset => {
+          const t  = Cesium.JulianDate.addSeconds(nowClock, offset, new Cesium.JulianDate());
+          const dt = Cesium.JulianDate.toDate(t);
+          const secs   = dt.getUTCSeconds();
+          const millis = dt.getUTCMilliseconds();
+          const fracSecond = secs + millis / 1000.0;
+
+          const eci = satellite.propagate(
+            satrec,
+            dt.getUTCFullYear(),
+            dt.getUTCMonth() + 1,
+            dt.getUTCDate(),
+            dt.getUTCHours(),
+            dt.getUTCMinutes(),
+            fracSecond
+          );
+          if (!eci.position) { return; }
+
+          const cart = new Cesium.Cartesian3(
+            eci.position.x * 1000,
+            eci.position.y * 1000,
+            eci.position.z * 1000
+          );
+          property.addSample(t, cart);
+        });
+
+        debrisObjects.push({ groupIndex, satrec, property });
+
+        const entityId = `debris_${groupIndex}_${j}`;
+        const { image } = DEBRIS_GROUPS[groupIndex];
+        viewer.entities.add({
+          id:       entityId,
+          name:     tle.name,
+          position: property,
+          billboard: {
+            image:          image,
+            width:          16,
+            height:         16,
+            scale:          0.5, 
+            verticalOrigin: Cesium.VerticalOrigin.CENTER
+          }
+        });
+      });
+    }
+    // Same logic as Sat
+    function removeDebrisGroup(groupIndex) {
+      viewer.entities.values
+        .filter(e => e.id && e.id.toString().startsWith(`debris_${groupIndex}_`))
+        .forEach(e => viewer.entities.remove(e));
+      debrisObjects = debrisObjects.filter(o => o.groupIndex !== groupIndex);
+    }
+    function removeAllDebris() {
+      viewer.entities.values
+        .filter(e => e.id && e.id.toString().startsWith('debris_'))
+        .forEach(e => viewer.entities.remove(e));
+      debrisObjects = [];
+    }
+
+    async function loadCheckedDebrisGroups() {
+      const selectedIndexes = Array.from(document.querySelectorAll('.debrisGroup:checked'))
+        .map(cb => parseInt(cb.value, 10));
+      for (const idx of selectedIndexes) {
+        const alreadyLoaded = debrisObjects.some(o => o.groupIndex === idx);
+        if (!alreadyLoaded) {
+          await loadDebrisGroup(idx);
+        }
+      }
+    }
+
+    document.getElementById('debrisToggle').addEventListener('change', async (evt) => {
+      if (evt.target.checked) {
+        await loadCheckedDebrisGroups();
+      } else {
+        removeAllDebris();
+      }
+    });
+    
+    document.querySelectorAll('.debrisGroup').forEach(cb => {
+      cb.addEventListener('change', async (evt) => {
+        const idx = parseInt(evt.target.value, 10);
+        if (!document.getElementById('debrisToggle').checked) {
+          return;
+        }
+        if (evt.target.checked) {
+          await loadDebrisGroup(idx);
+        } else {
+          removeDebrisGroup(idx);
+        }
+      });
+    });
+
+    (async () => {
+      if (document.getElementById('debrisToggle').checked) {
+        await loadCheckedDebrisGroups();
+      }
+    })();
+  </script>
+</body>
+</html>
+
+<!--
+
+// ————————————————————————————————————————————————————————————————————————
+// Author:  Darshini Rajamani © 2025
+// License: MIT (https://opensource.org/licenses/MIT)
+// Project: Cesium Live Satellites + Debris
+// Source:  TLE data fetched from CelesTrak (https://celestrak.org)
+// =============================================================================
+
+-->
