@@ -332,6 +332,9 @@
 
         satellites.push({ satrec, property });
 
+        viewer.entities.removeAll();
+        satellites.length = 0;
+
         const periodSeconds = orbitalPeriodMinutes(satrec) * 60;
 
         viewer.entities.add({
