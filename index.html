@@ -210,12 +210,13 @@
       return 1440 / revsPerDay;
     }
 
+
     // ——————————————
     // UI CONTROLS FOR ACTIVE SATELLITES
     // ——————————————
     document.getElementById('toggleControls').onclick = () => {
-        const panel = document.getElementById('controlPanel');
-        panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+      const panel = document.getElementById('controlPanel');
+      panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
     };
 
     const resultsList = document.getElementById('searchResults');
@@ -331,9 +332,6 @@
         });
 
         satellites.push({ satrec, property });
-
-        viewer.entities.removeAll();
-        satellites.length = 0;
 
         const periodSeconds = orbitalPeriodMinutes(satrec) * 60;
 
