@@ -141,80 +141,55 @@
       if (!entity || !entity.orbitType || !entity.path) {
         return;
       }
+      // Reset the path color to exactly the original (overwriting the yellow highlight)
       entity.path.material = new Cesium.ColorMaterialProperty(
         colorForOrbit(entity.orbitType)
       );
     });
 
-  
-
     const satellites    = [];
     let debrisObjects   = []; 
 
-    // ——————————————
     // On each tick, propagate both satellites and debris
-    // ——————————————
     viewer.clock.onTick.addEventListener((clock) => {
-      const now = clock.currentTime;
-      const m   = viewer.clock.multiplier;
+      const nowClock = clock.currentTime;
 
+      // Update active satellites (with labels + trails)
       satellites.forEach(({ satrec, property }) => {
-        if (m === 1) {
-          // Real‐time mode → sample every 0.25 s for the next 1 s
-          [0, 0.25, 0.5, 0.75, 1].forEach(offset => {
-            const t = Cesium.JulianDate.addSeconds(now, offset, new Cesium.JulianDate());
-            const dtDate = Cesium.JulianDate.toDate(t);
-            const frac   = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds() / 1000;
-            const eci    = satellite.propagate(
-              satrec,
-              dtDate.getUTCFullYear(),
-              dtDate.getUTCMonth() + 1,
-              dtDate.getUTCDate(),
-              dtDate.getUTCHours(),
-              dtDate.getUTCMinutes(),
-              frac
-            );
-            if (!eci.position) return;
-            const cart = new Cesium.Cartesian3(
-              eci.position.x * 1000,
-              eci.position.y * 1000,
-              eci.position.z * 1000
-            );
-            property.addSample(t, cart);
-          });
-        } else {
-          // Non‐real‐time → keep 1 s anchors (offsets 0 and 1)
-          [0, 1].forEach(offset => {
-            const t = Cesium.JulianDate.addSeconds(now, offset, new Cesium.JulianDate());
-            const dtDate = Cesium.JulianDate.toDate(t);
-            const frac   = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds() / 1000;
-            const eci    = satellite.propagate(
-              satrec,
-              dtDate.getUTCFullYear(),
-              dtDate.getUTCMonth() + 1,
-              dtDate.getUTCDate(),
-              dtDate.getUTCHours(),
-              dtDate.getUTCMinutes(),
-              frac
-            );
-            if (!eci.position) return;
-            const cart = new Cesium.Cartesian3(
-              eci.position.x * 1000,
-              eci.position.y * 1000,
-              eci.position.z * 1000
-            );
-            property.addSample(t, cart);
-          });
+        for (let dt = 0; dt <= 30; dt += 5) {
+          const t      = Cesium.JulianDate.addSeconds(nowClock, dt, new Cesium.JulianDate());
+          const jsDate = Cesium.JulianDate.toDate(t);
+
+          const secs       = jsDate.getUTCSeconds();
+          const millis     = jsDate.getUTCMilliseconds();
+          const fracSecond = secs + millis / 1000.0;
+
+          const eci = satellite.propagate(
+            satrec,
+            jsDate.getUTCFullYear(),
+            jsDate.getUTCMonth() + 1,
+            jsDate.getUTCDate(),
+            jsDate.getUTCHours(),
+            jsDate.getUTCMinutes(),
+            fracSecond
+          );
+          if (!eci.position) { continue; }
+          const cartInertial = new Cesium.Cartesian3(
+            eci.position.x * 1000,
+            eci.position.y * 1000,
+            eci.position.z * 1000
+          );
+          property.addSample(t, cartInertial);
         }
       });
 
-      // Update debris (unchanged)
+      // Update debris
       debrisObjects.forEach(({ satrec, property }) => {
-        const t      = now;
+        const t      = nowClock;
         const jsDate = Cesium.JulianDate.toDate(t);
-        const secs   = jsDate.getUTCSeconds();
-        const millis = jsDate.getUTCMilliseconds();
-        const frac   = secs + millis / 1000.0;
+        const secs       = jsDate.getUTCSeconds();
+        const millis     = jsDate.getUTCMilliseconds();
+        const fracSecond = secs + millis / 1000.0;
 
         const eci = satellite.propagate(
           satrec,
@@ -223,9 +198,9 @@
           jsDate.getUTCDate(),
           jsDate.getUTCHours(),
           jsDate.getUTCMinutes(),
-          frac
+          fracSecond
         );
-        if (!eci.position) return;
+        if (!eci.position) { return; }
         const cartInertial = new Cesium.Cartesian3(
           eci.position.x * 1000,
           eci.position.y * 1000,
@@ -234,7 +209,6 @@
         property.addSample(t, cartInertial);
       });
     });
-
 
     // ——————————————
     // TLE FETCH + CACHE FOR ACTIVE SATELLITES
@@ -315,6 +289,7 @@
     });
 
     document.getElementById('applyFilter').onclick = async () => {
+      // Clear existing entities
       viewer.clock.shouldAnimate = false;
 
       const now = Cesium.JulianDate.now();
@@ -374,32 +349,35 @@
           interpolationDegree:    2
         });
         property.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
-        property.forwardExtrapolationType  = Cesium.ExtrapolationType.HOLD;
 
-        // Seed 1 s anchors from t−2 to t+10 
+        // Seed 5 anchor points
         const nowClock = viewer.clock.currentTime;
-        for (let offset = -2; offset <= 10; offset += 1) {
-          const t = Cesium.JulianDate.addSeconds(nowClock, offset, new Cesium.JulianDate());
-          const dtDate       = Cesium.JulianDate.toDate(t);
-          const secondsTotal = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds() / 1000;
+        [-2, -1, 0, 1, 2].forEach(offset => {
+        //[-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2].forEach(offset => {
+
+          const t  = Cesium.JulianDate.addSeconds(nowClock, offset, new Cesium.JulianDate());
+          const dt = Cesium.JulianDate.toDate(t);
+          const secs       = dt.getUTCSeconds();
+          const millis     = dt.getUTCMilliseconds();
+          const fracSecond = secs + millis / 1000.0;
+
           const eci = satellite.propagate(
             satrec,
-            dtDate.getUTCFullYear(),
-            dtDate.getUTCMonth() + 1,
-            dtDate.getUTCDate(),
-            dtDate.getUTCHours(),
-            dtDate.getUTCMinutes(),
-            secondsTotal
+            dt.getUTCFullYear(),
+            dt.getUTCMonth() + 1,
+            dt.getUTCDate(),
+            dt.getUTCHours(),
+            dt.getUTCMinutes(),
+            fracSecond
           );
-          if (!eci.position) { continue; }
+          if (!eci.position) { return; }
           const cart = new Cesium.Cartesian3(
             eci.position.x * 1000,
             eci.position.y * 1000,
             eci.position.z * 1000
           );
           property.addSample(t, cart);
-        }
-
+        });
 
         satellites.push({ satrec, property });
 
@@ -425,7 +403,6 @@
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             pixelOffset:    new Cesium.Cartesian2(0, -20)
           },
-          
           path: {
             resolution: viewer.camera.positionCartographic.height < 200000 ? 5 : 20,
             material:   new Cesium.ColorMaterialProperty(color),
@@ -441,11 +418,17 @@
         entity._originalTrailSeconds = periodSeconds;
       });
 
+
+      
+
       // Recenter view on active satellites
       if (viewer.entities.values.length > 0) {
         viewer.zoomTo(viewer.entities, { duration: 2.0 });
       }
+      
       viewer.clock.shouldAnimate = true;
+
+
 
       if (document.getElementById('debrisToggle').checked) {
         await loadCheckedDebrisGroups();
@@ -458,24 +441,36 @@
       satellites.length = 0;
       removeAllDebris();
       debrisObjects = [];
+      viewer.homeButton.viewModel.command();
+
+      // (Optional) If you also want to reset the clock to “now”:
+      viewer.clock.currentTime = Cesium.JulianDate.now();
+      viewer.clock.startTime   = viewer.clock.currentTime.clone();
+      viewer.clock.multiplier  = 60;
+      viewer.clock.shouldAnimate = true;
     };
 
 
     viewer.camera.changed.addEventListener(() => {
+      // get the camera altitude in meters, then convert to kilometers
       const heightKm = Cesium.Cartographic.fromCartesian(viewer.camera.position).height / 1000.0;
 
+      // If we’re below 100 km, zero out all trailTime
       if (heightKm < 100000) {
         viewer.entities.values.forEach(ent => {
           if (ent.path && ent._originalTrailSeconds !== undefined) {
+            // only set to 0 if it isn’t already
             if (ent.path.trailTime.getValue() !== 0) {
               ent.path.trailTime = 0;
             }
           }
         });
       } else {
+        // camera is ≥ 100 km, restore each trailTime from _originalTrailSeconds
         viewer.entities.values.forEach(ent => {
           if (ent.path && ent._originalTrailSeconds !== undefined) {
             const orig = ent._originalTrailSeconds;
+            // only restore if currently zero
             if (ent.path.trailTime.getValue() === 0) {
               ent.path.trailTime = orig;
             }
@@ -484,29 +479,32 @@
       }
     });
 
+    // Replace both of your existing selectedEntityChanged callbacks with this single listener:
     viewer.selectedEntityChanged.addEventListener((pickedEntity) => {
-       if (pickedEntity && pickedEntity.path && pickedEntity._originalTrailSeconds !== undefined) {
-          // Hide just the clicked satellite’s path
-          pickedEntity.path.show = false;
+      // 1) If a satellite is picked, hide its path.
+      if (pickedEntity && pickedEntity.path && pickedEntity._originalTrailSeconds !== undefined) {
+        pickedEntity.path.show = false;
+        // (Optionally reset its color if you need that logic here, too.)
+        pickedEntity.path.material = new Cesium.ColorMaterialProperty(colorForOrbit(pickedEntity.orbitType));
       }
-
+      // 2) If nothing is selected, restore all paths based on camera height.
       if (!pickedEntity) {
         const heightKm = Cesium.Cartographic.fromCartesian(viewer.camera.position).height / 1000.0;
         viewer.entities.values.forEach(ent => {
           if (ent.path && ent._originalTrailSeconds !== undefined) {
-            if (heightKm < 100) {
-              if (ent.path.trailTime.getValue() !== 0) {
-                ent.path.trailTime = 0;
-              }
-            } else {
-              if (ent.path.trailTime.getValue() === 0) {
-                ent.path.trailTime = ent._originalTrailSeconds;
-              }
+            // Only restore when camera is high enough—below 100 km you want them hidden anyway.
+            if (heightKm >= 100) {
+              ent.path.show = true;
             }
           }
         });
       }
     });
+
+
+
+
+
     // ——————————————
     // DEBRIS LOADING & TOGGLE
     // ——————————————
