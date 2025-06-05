@@ -8,7 +8,7 @@
    Description:
      - Shows active satellites (with paths) and debris (as billboards) using CesiumJS
      - TLEs are cached (active = 2h, debris = 6h) and propagated via satellite.js
-   Last Mod:  2025-06-03
+   Last Mod:  2025-06-05
   =============================================================================
 -->
 
@@ -76,6 +76,9 @@
   </div>
 
   <div id="cesiumContainer"></div>
+  <div id="warningBox" class="warning-hidden">
+    ⚠️ Zooming in at real-time speeds may cause rendering glitches. Higher update rates increase lag; lower rates reduce visual fidelity. 
+  </div>
 
   <script type="module">
     // ——————————————
@@ -95,12 +98,19 @@
 
     // Real Time Button
     const realTimeBtn = document.getElementById('goRealTime');
+    const warningBox = document.getElementById('warningBox');
 
     realTimeBtn.addEventListener('click', () => {
-      viewer.clock.currentTime = Cesium.JulianDate.now();
+      viewer.clock.currentTime   = Cesium.JulianDate.now();
       viewer.clock.multiplier    = 1;
       viewer.clock.shouldAnimate = true;
+
+      warningBox.classList.remove('warning-hidden');
+      setTimeout(() => {
+        warningBox.classList.add('warning-hidden');
+      }, 10000);
     });
+
 
     viewer.scene.globe.depthTestAgainstTerrain = false;
    
@@ -126,7 +136,6 @@
               ent.path.trailTime = 0;
             }
           } else {
-            // Restore the trail if we have the original value stored
             const orig = ent._originalTrailSeconds;
             if (typeof orig === 'number' && ent.path.trailTime.getValue() === 0) {
               ent.path.trailTime = orig;
@@ -141,7 +150,6 @@
       if (!entity || !entity.orbitType || !entity.path) {
         return;
       }
-      // Reset the path color to exactly the original (overwriting the yellow highlight)
       entity.path.material = new Cesium.ColorMaterialProperty(
         colorForOrbit(entity.orbitType)
       );
@@ -149,6 +157,7 @@
 
     const satellites    = [];
     let debrisObjects   = []; 
+    let lastSatelliteUpdate = 0;
 
     // On each tick, propagate both satellites and debris
     viewer.clock.onTick.addEventListener((clock) => {
@@ -247,7 +256,6 @@
       return 1440 / revsPerDay;
     }
 
-
     // ——————————————
     // UI CONTROLS FOR ACTIVE SATELLITES
     // ——————————————
@@ -324,10 +332,18 @@
       let subs = [];
       const pick = (arr) => arr.slice(0, maxCount);
       if (orbitType === 'ALL') {
+        // take exactly 5 from LEO, 3 from MEO, 2 from GEO 
+        const leoCount = 5;
+        const meoCount = 3;
+        const geoCount = 2;
+
         subs = [
-          ...pick(buckets.LEO).map(s => [s, Cesium.Color.LIGHTBLUE,   3600]),
-          ...pick(buckets.MEO).map(s => [s, Cesium.Color.PALEVIOLETRED, 6 * 3600]),
-          ...pick(buckets.GEO).map(s => [s, Cesium.Color.YELLOW,       24 * 3600])
+          ...buckets.LEO.slice(0, leoCount)
+            .map(s => [s, Cesium.Color.LIGHTBLUE,   3600]),
+          ...buckets.MEO.slice(0, meoCount)
+            .map(s => [s, Cesium.Color.PALEVIOLETRED, 6 * 3600]),
+          ...buckets.GEO.slice(0, geoCount)
+            .map(s => [s, Cesium.Color.YELLOW,       24 * 3600])
         ];
       } else {
         const color = orbitType === 'LEO'
@@ -352,7 +368,7 @@
 
         // Seed 5 anchor points
         const nowClock = viewer.clock.currentTime;
-        [-2, -1, 0, 1, 2].forEach(offset => {
+        [0, 1, 2].forEach(offset => {
         //[-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2].forEach(offset => {
 
           const t  = Cesium.JulianDate.addSeconds(nowClock, offset, new Cesium.JulianDate());
@@ -419,16 +435,12 @@
       });
 
 
-      
-
       // Recenter view on active satellites
       if (viewer.entities.values.length > 0) {
         viewer.zoomTo(viewer.entities, { duration: 2.0 });
       }
       
       viewer.clock.shouldAnimate = true;
-
-
 
       if (document.getElementById('debrisToggle').checked) {
         await loadCheckedDebrisGroups();
@@ -443,7 +455,6 @@
       debrisObjects = [];
       viewer.homeButton.viewModel.command();
 
-      // (Optional) If you also want to reset the clock to “now”:
       viewer.clock.currentTime = Cesium.JulianDate.now();
       viewer.clock.startTime   = viewer.clock.currentTime.clone();
       viewer.clock.multiplier  = 60;
@@ -452,25 +463,20 @@
 
 
     viewer.camera.changed.addEventListener(() => {
-      // get the camera altitude in meters, then convert to kilometers
       const heightKm = Cesium.Cartographic.fromCartesian(viewer.camera.position).height / 1000.0;
 
-      // If we’re below 100 km, zero out all trailTime
       if (heightKm < 100000) {
         viewer.entities.values.forEach(ent => {
           if (ent.path && ent._originalTrailSeconds !== undefined) {
-            // only set to 0 if it isn’t already
             if (ent.path.trailTime.getValue() !== 0) {
               ent.path.trailTime = 0;
             }
           }
         });
       } else {
-        // camera is ≥ 100 km, restore each trailTime from _originalTrailSeconds
         viewer.entities.values.forEach(ent => {
           if (ent.path && ent._originalTrailSeconds !== undefined) {
             const orig = ent._originalTrailSeconds;
-            // only restore if currently zero
             if (ent.path.trailTime.getValue() === 0) {
               ent.path.trailTime = orig;
             }
@@ -479,20 +485,15 @@
       }
     });
 
-    // Replace both of your existing selectedEntityChanged callbacks with this single listener:
     viewer.selectedEntityChanged.addEventListener((pickedEntity) => {
-      // 1) If a satellite is picked, hide its path.
       if (pickedEntity && pickedEntity.path && pickedEntity._originalTrailSeconds !== undefined) {
         pickedEntity.path.show = false;
-        // (Optionally reset its color if you need that logic here, too.)
         pickedEntity.path.material = new Cesium.ColorMaterialProperty(colorForOrbit(pickedEntity.orbitType));
       }
-      // 2) If nothing is selected, restore all paths based on camera height.
       if (!pickedEntity) {
         const heightKm = Cesium.Cartographic.fromCartesian(viewer.camera.position).height / 1000.0;
         viewer.entities.values.forEach(ent => {
           if (ent.path && ent._originalTrailSeconds !== undefined) {
-            // Only restore when camera is high enough—below 100 km you want them hidden anyway.
             if (heightKm >= 100) {
               ent.path.show = true;
             }
@@ -500,10 +501,6 @@
         });
       }
     });
-
-
-
-
 
     // ——————————————
     // DEBRIS LOADING & TOGGLE
