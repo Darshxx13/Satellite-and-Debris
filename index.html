@@ -151,17 +151,20 @@
     const satellites    = [];
     let debrisObjects   = []; 
 
+    // ——————————————
+    // On each tick, propagate both satellites and debris
+    // ——————————————
     viewer.clock.onTick.addEventListener((clock) => {
       const now = clock.currentTime;
       const m   = viewer.clock.multiplier;
 
-      satellites.forEach(({ satrec, entity }) => {
+      satellites.forEach(({ satrec, property }) => {
         if (m === 1) {
           // Real‐time mode → sample every 0.25 s for the next 1 s
           [0, 0.25, 0.5, 0.75, 1].forEach(offset => {
             const t = Cesium.JulianDate.addSeconds(now, offset, new Cesium.JulianDate());
             const dtDate = Cesium.JulianDate.toDate(t);
-            const frac   = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds()/1000;
+            const frac   = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds() / 1000;
             const eci    = satellite.propagate(
               satrec,
               dtDate.getUTCFullYear(),
@@ -177,14 +180,14 @@
               eci.position.y * 1000,
               eci.position.z * 1000
             );
-            entity.position.addSample(t, cart);
+            property.addSample(t, cart);
           });
         } else {
-          // Non‐real‐time 
+          // Non‐real‐time → keep 1 s anchors (offsets 0 and 1)
           [0, 1].forEach(offset => {
             const t = Cesium.JulianDate.addSeconds(now, offset, new Cesium.JulianDate());
             const dtDate = Cesium.JulianDate.toDate(t);
-            const frac   = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds()/1000;
+            const frac   = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds() / 1000;
             const eci    = satellite.propagate(
               satrec,
               dtDate.getUTCFullYear(),
@@ -200,18 +203,18 @@
               eci.position.y * 1000,
               eci.position.z * 1000
             );
-            entity.position.addSample(t, cart);
+            property.addSample(t, cart);
           });
         }
       });
 
-      // Update debris
+      // Update debris (unchanged)
       debrisObjects.forEach(({ satrec, property }) => {
-        const t      = nowClock;
+        const t      = now;
         const jsDate = Cesium.JulianDate.toDate(t);
-        const secs       = jsDate.getUTCSeconds();
-        const millis     = jsDate.getUTCMilliseconds();
-        const fracSecond = secs + millis / 1000.0;
+        const secs   = jsDate.getUTCSeconds();
+        const millis = jsDate.getUTCMilliseconds();
+        const frac   = secs + millis / 1000.0;
 
         const eci = satellite.propagate(
           satrec,
@@ -220,9 +223,9 @@
           jsDate.getUTCDate(),
           jsDate.getUTCHours(),
           jsDate.getUTCMinutes(),
-          fracSecond
+          frac
         );
-        if (!eci.position) { return; }
+        if (!eci.position) return;
         const cartInertial = new Cesium.Cartesian3(
           eci.position.x * 1000,
           eci.position.y * 1000,
@@ -231,6 +234,7 @@
         property.addSample(t, cartInertial);
       });
     });
+
 
     // ——————————————
     // TLE FETCH + CACHE FOR ACTIVE SATELLITES
