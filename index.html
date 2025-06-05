@@ -88,7 +88,9 @@
       timeline:            true,
       animation:           true,
       baseLayerPicker:     false,
-      sceneModePicker:     false
+      sceneModePicker:     false,
+      terrainProvider: new Cesium.EllipsoidTerrainProvider()
+
     });
 
     // Real Time Button
@@ -100,8 +102,8 @@
       viewer.clock.shouldAnimate = true;
     });
 
-    viewer.scene.globe.depthTestAgainstTerrain = true;
-
+    viewer.scene.globe.depthTestAgainstTerrain = false;
+   
     // Run clock indefinitely at 60× 
     viewer.clock.startTime     = Cesium.JulianDate.now();
     viewer.clock.currentTime   = viewer.clock.startTime.clone();
@@ -109,39 +111,97 @@
     viewer.clock.multiplier    = 60;
     viewer.clock.shouldAnimate = true;
 
+
+    (function setupTrailToggleAtHighSpeed() {
+      viewer.clock.onTick.addEventListener(() => {
+        const speed = viewer.clock.multiplier;
+        const disableTrails = (speed > 12000);
+
+        viewer.entities.values.forEach((ent) => {
+          if (!ent.path) return;
+
+          if (disableTrails) {
+            // Hide the trail
+            if (ent.path.trailTime.getValue() !== 0) {
+              ent.path.trailTime = 0;
+            }
+          } else {
+            // Restore the trail if we have the original value stored
+            const orig = ent._originalTrailSeconds;
+            if (typeof orig === 'number' && ent.path.trailTime.getValue() === 0) {
+              ent.path.trailTime = orig;
+            }
+          }
+        });
+      });
+    })();
+
+
+    viewer.selectedEntityChanged.addEventListener((entity) => {
+      if (!entity || !entity.orbitType || !entity.path) {
+        return;
+      }
+      entity.path.material = new Cesium.ColorMaterialProperty(
+        colorForOrbit(entity.orbitType)
+      );
+    });
+
+  
+
     const satellites    = [];
     let debrisObjects   = []; 
 
-    // On each tick, propagate both satellites and debris
     viewer.clock.onTick.addEventListener((clock) => {
-      const nowClock = clock.currentTime;
+      const now = clock.currentTime;
+      const m   = viewer.clock.multiplier;
 
-      // Update active satellites (with labels + trails)
-      satellites.forEach(({ satrec, property }) => {
-        for (let dt = 0; dt <= 30; dt += 5) {
-          const t      = Cesium.JulianDate.addSeconds(nowClock, dt, new Cesium.JulianDate());
-          const jsDate = Cesium.JulianDate.toDate(t);
-
-          const secs       = jsDate.getUTCSeconds();
-          const millis     = jsDate.getUTCMilliseconds();
-          const fracSecond = secs + millis / 1000.0;
-
-          const eci = satellite.propagate(
-            satrec,
-            jsDate.getUTCFullYear(),
-            jsDate.getUTCMonth() + 1,
-            jsDate.getUTCDate(),
-            jsDate.getUTCHours(),
-            jsDate.getUTCMinutes(),
-            fracSecond
-          );
-          if (!eci.position) { continue; }
-          const cartInertial = new Cesium.Cartesian3(
-            eci.position.x * 1000,
-            eci.position.y * 1000,
-            eci.position.z * 1000
-          );
-          property.addSample(t, cartInertial);
+      satellites.forEach(({ satrec, entity }) => {
+        if (m === 1) {
+          // Real‐time mode → sample every 0.25 s for the next 1 s
+          [0, 0.25, 0.5, 0.75, 1].forEach(offset => {
+            const t = Cesium.JulianDate.addSeconds(now, offset, new Cesium.JulianDate());
+            const dtDate = Cesium.JulianDate.toDate(t);
+            const frac   = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds()/1000;
+            const eci    = satellite.propagate(
+              satrec,
+              dtDate.getUTCFullYear(),
+              dtDate.getUTCMonth() + 1,
+              dtDate.getUTCDate(),
+              dtDate.getUTCHours(),
+              dtDate.getUTCMinutes(),
+              frac
+            );
+            if (!eci.position) return;
+            const cart = new Cesium.Cartesian3(
+              eci.position.x * 1000,
+              eci.position.y * 1000,
+              eci.position.z * 1000
+            );
+            entity.position.addSample(t, cart);
+          });
+        } else {
+          // Non‐real‐time 
+          [0, 1].forEach(offset => {
+            const t = Cesium.JulianDate.addSeconds(now, offset, new Cesium.JulianDate());
+            const dtDate = Cesium.JulianDate.toDate(t);
+            const frac   = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds()/1000;
+            const eci    = satellite.propagate(
+              satrec,
+              dtDate.getUTCFullYear(),
+              dtDate.getUTCMonth() + 1,
+              dtDate.getUTCDate(),
+              dtDate.getUTCHours(),
+              dtDate.getUTCMinutes(),
+              frac
+            );
+            if (!eci.position) return;
+            const cart = new Cesium.Cartesian3(
+              eci.position.x * 1000,
+              eci.position.y * 1000,
+              eci.position.z * 1000
+            );
+            entity.position.addSample(t, cart);
+          });
         }
       });
 
@@ -171,7 +231,6 @@
         property.addSample(t, cartInertial);
       });
     });
-
 
     // ——————————————
     // TLE FETCH + CACHE FOR ACTIVE SATELLITES
@@ -219,6 +278,7 @@
       panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
     };
 
+
     const resultsList = document.getElementById('searchResults');
     function renderMatches(satArray) {
       resultsList.innerHTML = '';
@@ -251,7 +311,14 @@
     });
 
     document.getElementById('applyFilter').onclick = async () => {
-      // Clear existing entities
+      viewer.clock.shouldAnimate = false;
+
+      const now = Cesium.JulianDate.now();
+      viewer.clock.startTime   = now.clone();
+      viewer.clock.currentTime = now.clone();
+      viewer.clock.clockRange  = Cesium.ClockRange.UNBOUNDED;
+      viewer.clock.multiplier  = 60;
+
       viewer.entities.removeAll();
       satellites.length = 0;
       removeAllDebris();
@@ -303,39 +370,38 @@
           interpolationDegree:    2
         });
         property.backwardExtrapolationType = Cesium.ExtrapolationType.HOLD;
+        property.forwardExtrapolationType  = Cesium.ExtrapolationType.HOLD;
 
-        // Seed 5 anchor points
+        // Seed 1 s anchors from t−2 to t+10 
         const nowClock = viewer.clock.currentTime;
-        [-2, -1, 0, 1, 2].forEach(offset => {
-          const t  = Cesium.JulianDate.addSeconds(nowClock, offset, new Cesium.JulianDate());
-          const dt = Cesium.JulianDate.toDate(t);
-          const secs       = dt.getUTCSeconds();
-          const millis     = dt.getUTCMilliseconds();
-          const fracSecond = secs + millis / 1000.0;
-
+        for (let offset = -2; offset <= 10; offset += 1) {
+          const t = Cesium.JulianDate.addSeconds(nowClock, offset, new Cesium.JulianDate());
+          const dtDate       = Cesium.JulianDate.toDate(t);
+          const secondsTotal = dtDate.getUTCSeconds() + dtDate.getUTCMilliseconds() / 1000;
           const eci = satellite.propagate(
             satrec,
-            dt.getUTCFullYear(),
-            dt.getUTCMonth() + 1,
-            dt.getUTCDate(),
-            dt.getUTCHours(),
-            dt.getUTCMinutes(),
-            fracSecond
+            dtDate.getUTCFullYear(),
+            dtDate.getUTCMonth() + 1,
+            dtDate.getUTCDate(),
+            dtDate.getUTCHours(),
+            dtDate.getUTCMinutes(),
+            secondsTotal
           );
-          if (!eci.position) { return; }
+          if (!eci.position) { continue; }
           const cart = new Cesium.Cartesian3(
             eci.position.x * 1000,
             eci.position.y * 1000,
             eci.position.z * 1000
           );
           property.addSample(t, cart);
-        });
+        }
+
 
         satellites.push({ satrec, property });
 
         const periodSeconds = orbitalPeriodMinutes(satrec) * 60;
 
-        viewer.entities.add({
+        const entity = viewer.entities.add({
           id:       sat.name,
           name:     sat.name,
           position: property,
@@ -355,20 +421,27 @@
             verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
             pixelOffset:    new Cesium.Cartesian2(0, -20)
           },
+          
           path: {
-            resolution: 60,
+            resolution: viewer.camera.positionCartographic.height < 200000 ? 5 : 20,
             material:   new Cesium.ColorMaterialProperty(color),
+            depthFailMaterial: new Cesium.ColorMaterialProperty(color),
+
             width:      1,
             leadTime:   0,
-            trailTime:  periodSeconds
+            trailTime:  periodSeconds,
+            depthFailEnabled: true
           }
         });
+
+        entity._originalTrailSeconds = periodSeconds;
       });
 
       // Recenter view on active satellites
       if (viewer.entities.values.length > 0) {
         viewer.zoomTo(viewer.entities, { duration: 2.0 });
       }
+      viewer.clock.shouldAnimate = true;
 
       if (document.getElementById('debrisToggle').checked) {
         await loadCheckedDebrisGroups();
@@ -384,6 +457,52 @@
     };
 
 
+    viewer.camera.changed.addEventListener(() => {
+      const heightKm = Cesium.Cartographic.fromCartesian(viewer.camera.position).height / 1000.0;
+
+      if (heightKm < 100000) {
+        viewer.entities.values.forEach(ent => {
+          if (ent.path && ent._originalTrailSeconds !== undefined) {
+            if (ent.path.trailTime.getValue() !== 0) {
+              ent.path.trailTime = 0;
+            }
+          }
+        });
+      } else {
+        viewer.entities.values.forEach(ent => {
+          if (ent.path && ent._originalTrailSeconds !== undefined) {
+            const orig = ent._originalTrailSeconds;
+            if (ent.path.trailTime.getValue() === 0) {
+              ent.path.trailTime = orig;
+            }
+          }
+        });
+      }
+    });
+
+    viewer.selectedEntityChanged.addEventListener((pickedEntity) => {
+       if (pickedEntity && pickedEntity.path && pickedEntity._originalTrailSeconds !== undefined) {
+          // Hide just the clicked satellite’s path
+          pickedEntity.path.show = false;
+      }
+
+      if (!pickedEntity) {
+        const heightKm = Cesium.Cartographic.fromCartesian(viewer.camera.position).height / 1000.0;
+        viewer.entities.values.forEach(ent => {
+          if (ent.path && ent._originalTrailSeconds !== undefined) {
+            if (heightKm < 100) {
+              if (ent.path.trailTime.getValue() !== 0) {
+                ent.path.trailTime = 0;
+              }
+            } else {
+              if (ent.path.trailTime.getValue() === 0) {
+                ent.path.trailTime = ent._originalTrailSeconds;
+              }
+            }
+          }
+        });
+      }
+    });
     // ——————————————
     // DEBRIS LOADING & TOGGLE
     // ——————————————
@@ -503,7 +622,7 @@
             image:          image,
             width:          16,
             height:         16,
-            scale:          0.5, 
+            scale:          0.75, 
             verticalOrigin: Cesium.VerticalOrigin.CENTER
           }
         });
@@ -569,7 +688,6 @@
 
 // ————————————————————————————————————————————————————————————————————————
 // Author:  Darshini Rajamani © 2025
-// License: MIT (https://opensource.org/licenses/MIT)
 // Project: Cesium Live Satellites + Debris
 // Source:  TLE data fetched from CelesTrak (https://celestrak.org)
 // =============================================================================
