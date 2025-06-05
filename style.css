@@ -36,6 +36,7 @@ body,
     align-items: flex-start;
     z-index: 10;
     gap: 12px;                
+
 }
   
 #controls > button {
@@ -62,7 +63,7 @@ body,
     background: rgba(255,255,255,0.9);
     color: black;
     padding: 12px;
-    margin-top: 4px;      
+    margin-top: 4px;       
     border-radius: 4px;
     font-size: 14px;
 }
@@ -104,31 +105,51 @@ body,
 #debrisGroupControls label { display:block; cursor:pointer; }
 
 #animation_pathClock {
-  display: none;
+    display: none;
 }
 
 #animation_pathWingButton {
-  display: none;
+    display: none;
 }
-
+  
 .buttonStack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;               
+    display: flex;
+    flex-direction: column;
+    gap: 6px;               
 }
 
 .buttonStack button,
 #toggleControls {
-  padding:    6px 12px;
-  font-size:  14px;
-  background: #fff;
-  border:     1px solid #ccc;
-  border-radius: 4px;
-  cursor:     pointer;
+    padding:    6px 12px;
+    font-size:  14px;
+    background: #fff;
+    border:     1px solid #ccc;
+    border-radius: 4px;
+    cursor:     pointer;
 }
 
 .buttonStack button:hover,
 #toggleControls:hover {
-  background-color: #f0f0f0;
+    background-color: #f0f0f0;
 }
+
+.warning-hidden {
+    display: none;
+}
+
+#warningBox {
+    position: absolute;
+    top: 90px;             
+    right: 10px;            
+    z-index: 999;           
+    max-width: 300px;
+    padding: 10px 15px;
+    background-color: rgba(0, 0, 0, 0.75);
+    color: white;
+    font-size: 15px;
+    border-radius: 4px;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
+    line-height: 1.3;
+}
+
 
