@@ -96,6 +96,23 @@
 
     });
 
+    const TEN_DAYS_SECONDS = 10 * 24 * 3600;
+
+    viewer.clock.onTick.addEventListener(() => {
+      const elapsed = Cesium.JulianDate.secondsDifference(
+        viewer.clock.currentTime,
+        viewer.clock.startTime
+      );
+
+      if (elapsed > TEN_DAYS_SECONDS) {
+        const nowJD = Cesium.JulianDate.now();
+        viewer.clock.startTime   = nowJD.clone();
+        viewer.clock.currentTime = nowJD.clone();
+        viewer.clock.multiplier  = 60;
+        viewer.clock.shouldAnimate = true;
+      }
+    });
+
     // Real Time Button
     const realTimeBtn = document.getElementById('goRealTime');
     const warningBox = document.getElementById('warningBox');
