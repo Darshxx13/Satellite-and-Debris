@@ -349,18 +349,17 @@
       let subs = [];
       const pick = (arr) => arr.slice(0, maxCount);
       if (orbitType === 'ALL') {
-        // take exactly 5 from LEO, 3 from MEO, 2 from GEO 
-        const leoCount = 5;
-        const meoCount = 3;
-        const geoCount = 2;
+        const leoCount = maxCount;
+        const meoCount = maxCount;
+        const geoCount = maxCount;
 
         subs = [
           ...buckets.LEO.slice(0, leoCount)
-            .map(s => [s, Cesium.Color.LIGHTBLUE,   3600]),
+            .map(s => [s, Cesium.Color.LIGHTBLUE, 3600]),
           ...buckets.MEO.slice(0, meoCount)
             .map(s => [s, Cesium.Color.PALEVIOLETRED, 6 * 3600]),
           ...buckets.GEO.slice(0, geoCount)
-            .map(s => [s, Cesium.Color.YELLOW,       24 * 3600])
+            .map(s => [s, Cesium.Color.YELLOW, 24 * 3600])
         ];
       } else {
         const color = orbitType === 'LEO'
