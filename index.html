@@ -24,8 +24,7 @@
   <link rel="stylesheet" href="style.css" />
 
   <!-- satellite.js for TLE parsing & propagation -->
-  <script src="https://unpkg.com/satellite.js/dist/satellite.min.js"></script>
-
+  <script src="https://unpkg.com/satellite.js@4.1.4/dist/satellite.min.js"></script>
 </head>
 <body>
   <div id="controls">
@@ -84,8 +83,7 @@
     // ——————————————
     // CORE SETUP 
     // ——————————————
-    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI3NjdhOWNmNy01OTRlLTQ5NWYtYjBkMi0zNjU2NDc1N2ZmMWEiLCJpZCI6MzAzNjE2LCJpYXQiOjE3NDc2MDUyMzl9.m8hy0mM7EBQiQXR6u-tcUOQvYZ6ugBxwcQYnWyMJI5c';
-
+  Cesium.Ion.defaultAccessToken = 'CESIUM_TOKEN_PLACEHOLDER';
     const viewer = new Cesium.Viewer('cesiumContainer', {
       shouldAnimate:       true,
       timeline:            true,
@@ -548,6 +546,7 @@
       const now = Date.now();
       const lastFetch = Number(localStorage.getItem(cacheKeyTime) || 0);
 
+      // 1. Check cache FIRST — before any network request
       if (lastFetch && now - lastFetch < SIX_HOURS_MS) {
         try {
           const cachedJson = localStorage.getItem(cacheKeyData);
@@ -559,10 +558,24 @@
         }
       }
 
+      // 2. Cache miss — now get the URL and fetch
       const { url } = DEBRIS_GROUPS[groupIndex];
-      const txt = await (await fetch(url)).text();
-      const lines = txt.split('\n').filter(l => l.trim());
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.error(`CelesTrak returned ${response.status} for group ${groupIndex}`);
+        return [];
+      }
 
+      const txt = await response.text();
+
+      // 3. Validate we got actual TLE data, not an HTML error page
+      if (txt.trim().startsWith('<') || txt.trim().length < 100) {
+        console.error(`CelesTrak returned non-TLE content for group ${groupIndex}:`, txt.slice(0, 200));
+        return [];
+      }
+
+      // 4. Parse
+      const lines = txt.split('\n').filter(l => l.trim());
       const out = [];
       for (let i = 0; i < lines.length; i += 3) {
         const name = lines[i].trim();
@@ -573,6 +586,7 @@
         }
       }
 
+      // 5. Cache the result
       try {
         localStorage.setItem(cacheKeyData, JSON.stringify(out));
         localStorage.setItem(cacheKeyTime, String(now));
@@ -582,6 +596,7 @@
 
       return out;
     }
+
 
     async function loadDebrisGroup(groupIndex) {
       const tleArray = await getDebrisGroupTLEs(groupIndex);
@@ -664,6 +679,7 @@
         const alreadyLoaded = debrisObjects.some(o => o.groupIndex === idx);
         if (!alreadyLoaded) {
           await loadDebrisGroup(idx);
+          await new Promise(r => setTimeout(r, 1500)); // 1.5s gap between requests
         }
       }
     }
