@@ -32,7 +32,7 @@
       <button id="reset">Reset</button>
       <button id="goRealTime">Real-Time (Today)</button>
     </div>
-    <button id="toggleControls">☰ Filters</button>
+    <button id="toggleControls">View Satellites</button>
 
     <div id="debrisControls">
       <input type="checkbox" id="debrisToggle" checked />
@@ -473,6 +473,8 @@
       viewer.clock.startTime   = viewer.clock.currentTime.clone();
       viewer.clock.multiplier  = 60;
       viewer.clock.shouldAnimate = true;
+
+      document.querySelectorAll('.debrisGroup').forEach(cb => cb.checked = false);
     };
 
 
