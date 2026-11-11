@@ -277,8 +277,8 @@
     }
 
     function orbitalPeriodMinutes(sr) {
-      const revsPerDay = sr.no * 1440 / (2 * Math.PI);
-      return 1440 / revsPerDay;
+      const revsPerDay = sr.no * 1436 / (2 * Math.PI);
+      return 1436 / revsPerDay;
     }
 
     // ——————————————
@@ -350,8 +350,8 @@
         const sr = satellite.twoline2satrec(s.line1, s.line2);
         const p  = orbitalPeriodMinutes(sr);
         if (p >= 90 && p <= 128)        buckets.LEO.push(s);
-        else if (p > 128 && p <= 1440)   buckets.MEO.push(s);
-        else if (p > 1440)               buckets.GEO.push(s);
+        else if (p > 128 && p <= 1436)   buckets.MEO.push(s);
+        else if (p > 1436)               buckets.GEO.push(s);
       });
 
       let subs = [];
